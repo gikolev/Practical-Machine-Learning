@@ -1,0 +1,147 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "George Kolev"
+date: "May 22, 2016"
+output: html_document
+---
+
+## Background
+
+Using devices such as *Jawbone Up*, *Nike FuelBand*, and *Fitbit* it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify *how well* they do it. 
+
+In this project, we use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, who were asked to perform barbell lifts. More information is available at http://groupware.les.inf.puc-rio.br/har.
+
+The goal is to predict the manner in which the participants performed an exercise, or the ```classe``` variable in the dataset, using any of the other variables.  There are five different classes:
+
+* Class A - exactly according to the instructions;
+* Class B - throwing the elbows to the front;
+* Class C - lifting the dumbbell only halfway;
+* Class D - lowering the dumbbell only halfway; and
+* Class E - throwing the hips to the front.
+
+Scripts were written and tested on RSudio Version 0.99.473 running on OS X El Capitan Version 10.11.4 (15E65).
+
+## Data Preprocessing
+
+### Setup and data import
+
+We load the data, which have been split into ```test``` and ```train``` sets, containing, respectivelly, 20 and 19,622 observations of 160 variables.
+
+```{r, message=FALSE, warning=FALSE}
+## Load required R packages
+library(lattice)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(corrplot)
+library(rattle)
+
+## Set the seed for reproduceability
+set.seed(12345)
+
+## Load data from the provided URLs and instruct R to read "NA", "#DIV/0!", and blank strings as NA values.
+trainurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+train <- read.csv(url(trainurl), na.strings = c("NA", "#DIV/0!", ""), header = TRUE)
+test <- read.csv(url(testurl), na.strings = c("NA", "#DIV/0!", ""), header = TRUE)
+```
+
+### Data slicing
+
+We partition the ```train``` data set into two sets using a 75% split, in order to perform cross-validation and evaluate our prediction models.  
+
+```{r, message=FALSE}
+inTrain <- createDataPartition(y = train$classe, p = 0.75, list = FALSE)
+subTrain <- train[inTrain, ]
+subTest <- train[-inTrain, ]
+```
+
+### Data cleaning
+
+We remove columns with missing values.  
+
+```{r, message=FALSE}
+subTrain <-subTrain[,colSums(is.na(train)) == 0]
+```
+
+We also remove the first seven variables, which appear irrelevant to this analysis.
+
+```{r, message=FALSE}
+subTrain <-subTrain[, -c(1:7)]
+```
+
+We are left with 53 variables: ```classe``` and 52 potential predictors. 
+
+### Other preprocessing
+
+We check for predictors with near-zero variance.
+
+```{r, message=FALSE}
+nzv <- nearZeroVar(subTrain, saveMetrics=TRUE)
+nrow(nzv[nzv$nzv == TRUE, ])
+```
+
+We check for highly correlated predictors (corr > 0.8).  There are several instances of high correlation, indicated by the dark blue circles in the multicollinearity plot in the Graphs section.  We remove these variables.
+
+```{r, message=FALSE}
+M <- abs(cor(subTrain[, - 53]))
+high_corr <- findCorrelation(M, cutoff = 0.8)
+subTrain <- subTrain[, -high_corr]
+```
+
+We are left with 40 variables.
+
+## Methodology
+
+We will use classification trees and the random forrest method, and compare the accuracy of each model.  We perform 5-fold cross validation.
+
+```{r, message=FALSE}
+control <- trainControl(method = "cv", number = 5)
+```
+
+## Prediction Algorithms
+
+```{r, message=FALSE}
+## Create models
+mod_rpart <- train(classe ~., data = subTrain, method = "rpart", trControl = control)
+mod_rf <- train(classe ~., data = subTrain, method = "rf", trControl = control)
+
+## Predict 
+pred_rpart <- predict(mod_rpart, subTest)
+pred_rf <- predict(mod_rf, subTest)
+
+## Accuracy
+confusionMatrix(pred_rpart, subTest$classe)$overall[1]
+confusionMatrix(pred_rf, subTest$classe)$overall[1]
+```
+
+The classification tree model has an accuracy of `r round(confusionMatrix(pred_rpart, subTest$classe)$overall[1]*100, digits = 2)`%.  The random forest model has a much better accuracy of `r round(confusionMatrix(pred_rf, subTest$classe)$overall[1]*100, digits = 2)`%, and its expected out-of-sample error rate is `r 100-round(confusionMatrix(pred_rf, subTest$classe)$overall[1]*100, digits = 2)`%.
+
+## Prediction
+
+We apply the random forest algorithm to the original test set of 20 observations.
+
+```{r, message=FALSE}
+predict(mod_rf, test)
+```
+
+## References
+
+Velloso, E., Bulling, A., Gellersen, H., Ugulino, W., and Fuks, H. for *Qualitative Activity Recognition of Weight Lifting Exercises.* Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.  
+
+## Graphs
+
+#### Multicollinearity Plot
+
+```{r, message=FALSE, fig.width = 10, fig.height = 10}
+diag(M) <- 0 ## Remove diagonal values of correlation matrix (i.e. correlation of variables with themselves).
+corrplot(M, tl.cex = 0.5, tl.col = "black", method = "circle") ## Generate correlation plot.
+```
+
+#### Classification Tree Model
+
+```{r, message=FALSE, fig.width = 10, fig.height = 10}
+fancyRpartPlot(mod_rpart$finalModel)
+```
